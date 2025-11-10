@@ -117,6 +117,48 @@ except Exception as e:
 
 # Test 5: Create data collator
 print("\n[5/6] Testing data collator...")
+
+# First test processor.apply_chat_template directly
+print("Testing processor.apply_chat_template directly...")
+try:
+    test_messages = [[{
+        "role": "user",
+        "content": [{"type": "image"}, {"type": "text", "text": "What is this?"}]
+    }, {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "This is a test."}]
+    }]]
+
+    # Test with tokenize=False
+    text_output = processor.apply_chat_template(
+        test_messages,
+        tokenize=False,
+        add_generation_prompt=False
+    )
+    print(f"✓ apply_chat_template with tokenize=False works")
+    print(f"  Output type: {type(text_output)}")
+
+    # Test with tokenize=True and images
+    from PIL import Image
+    test_image = Image.new("RGB", (100, 100))
+    tokenized_output = processor.apply_chat_template(
+        test_messages,
+        images=[[test_image]],
+        tokenize=True,
+        add_generation_prompt=False,
+        return_tensors="pt"
+    )
+    print(f"✓ apply_chat_template with tokenize=True and images works")
+    print(f"  Output type: {type(tokenized_output)}")
+    if isinstance(tokenized_output, dict):
+        print(f"  Output keys: {tokenized_output.keys()}")
+
+except Exception as e:
+    print(f"✗ Direct processor test failed: {e}")
+    import traceback
+    traceback.print_exc()
+
+print("\nTesting data collator...")
 try:
     collator = create_qwen3_vl_collator(
         processor=processor,

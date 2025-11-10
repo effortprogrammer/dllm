@@ -65,36 +65,22 @@ class Qwen3VLDataCollator:
 
         # Process with Qwen3VL processor
         # This handles both text tokenization and image preprocessing
+        # Use apply_chat_template directly with all parameters
 
-        # Prepare the conversation text using apply_chat_template first
-        # This will handle the conversation formatting
-        text = self.processor.apply_chat_template(
+        # Check if we have images and prepare them
+        has_images = any(img is not None for img in images)
+
+        # Apply chat template with tokenization and image processing
+        batch_inputs = self.processor.apply_chat_template(
             texts,
-            tokenize=False,  # Get text first, not tokens
+            images=images if has_images else None,
+            tokenize=True,
             add_generation_prompt=False,
+            padding=self.padding,
+            max_length=self.max_seq_length,
+            truncation=True,
+            return_tensors="pt",
         )
-
-        # Now use the processor directly with the formatted text and images
-        # This avoids the duplicate images argument issue
-        if any(img is not None for img in images):
-            # Process with images
-            batch_inputs = self.processor(
-                text=text,
-                images=images,
-                padding=self.padding,
-                max_length=self.max_seq_length,
-                truncation=True,
-                return_tensors="pt",
-            )
-        else:
-            # Process without images
-            batch_inputs = self.processor(
-                text=text,
-                padding=self.padding,
-                max_length=self.max_seq_length,
-                truncation=True,
-                return_tensors="pt",
-            )
 
         # Create labels from input_ids
         labels = batch_inputs["input_ids"].clone()
@@ -168,39 +154,51 @@ class Qwen3VLDataCollator:
         Returns:
             Labels with prompt tokens masked
         """
+        # Simplified approach: Use special tokens to find message boundaries
+        # Look for the assistant marker tokens
+        tokenizer = self.processor.tokenizer
+
         # For each example in the batch
-        for idx, messages in enumerate(texts):
-            # Find positions of assistant messages
-            # We need to mask everything except assistant responses
+        for idx in range(labels.shape[0]):
+            # Get the token IDs for this example
+            token_ids = batch_inputs["input_ids"][idx].tolist()
 
-            # Simple heuristic: tokenize each message separately and find positions
-            # This is approximate but works for most cases
-            current_pos = 0
+            # Find positions of assistant responses
+            # Qwen3VL uses <|im_start|> and <|im_end|> tokens
+            im_start_token = tokenizer.convert_tokens_to_ids("<|im_start|>")
+            im_end_token = tokenizer.convert_tokens_to_ids("<|im_end|>")
 
-            for msg_idx, msg in enumerate(messages):
-                role = msg["role"]
+            # Also look for "assistant" as a substring in the tokenized text
+            # Convert token IDs back to text to find role markers
+            decoded_text = tokenizer.decode(token_ids, skip_special_tokens=False)
 
-                # Tokenize this message to estimate its length
-                # Note: Don't pass images=None as it causes duplicate keyword argument error
-                msg_tokens = self.processor.apply_chat_template(
-                    [msg],
-                    tokenize=True,
-                    add_generation_prompt=False,
-                    return_tensors="pt",
-                )["input_ids"]
+            # Simple approach: Find "assistant" markers in the text
+            # and map back to token positions
+            assistant_marker = "<|im_start|>assistant"
+            user_marker = "<|im_start|>user"
 
-                msg_length = msg_tokens.shape[1]
+            # Find all occurrences of assistant responses
+            import re
+            assistant_spans = []
+            for match in re.finditer(re.escape(assistant_marker), decoded_text):
+                start = match.start()
+                # Find the corresponding end marker
+                end_match = decoded_text.find("<|im_end|>", start)
+                if end_match != -1:
+                    assistant_spans.append((start, end_match + len("<|im_end|>")))
 
-                # If this is a user message, mask it
-                if role == "user":
-                    end_pos = min(current_pos + msg_length, labels.shape[1])
-                    labels[idx, current_pos:end_pos] = -100
+            # Convert character positions to token positions (approximate)
+            # This is a simplified approach
+            if assistant_spans:
+                # For simplicity, mask everything before the first assistant response
+                first_assistant_pos = assistant_spans[0][0]
+                # Estimate token position (rough approximation)
+                chars_per_token = len(decoded_text) / len(token_ids)
+                first_assistant_token_pos = int(first_assistant_pos / chars_per_token)
 
-                current_pos += msg_length
-
-                # Stop if we exceed sequence length
-                if current_pos >= labels.shape[1]:
-                    break
+                # Mask all tokens before the assistant response
+                if first_assistant_token_pos > 0:
+                    labels[idx, :first_assistant_token_pos] = -100
 
         return labels
 
