@@ -162,9 +162,9 @@ class Qwen3VLDataCollator:
                 role = msg["role"]
 
                 # Tokenize this message to estimate its length
+                # Note: Don't pass images=None as it causes duplicate keyword argument error
                 msg_tokens = self.processor.apply_chat_template(
                     [msg],
-                    images=None,
                     tokenize=True,
                     add_generation_prompt=False,
                     return_tensors="pt",
