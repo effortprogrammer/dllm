@@ -211,6 +211,11 @@ class Qwen3VLForMaskedLM(PreTrainedModel):
 
         # Load the base Qwen3VL model
         logger.info(f"Loading Qwen3VL from {pretrained_model_name_or_path}...")
+
+        # Add attn_implementation="eager" if not specified to avoid SDPA issues
+        if "attn_implementation" not in kwargs:
+            kwargs["attn_implementation"] = "eager"
+
         base_model = Qwen3VLForConditionalGeneration.from_pretrained(
             pretrained_model_name_or_path, *model_args, **kwargs
         )
