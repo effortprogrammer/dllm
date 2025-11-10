@@ -65,17 +65,36 @@ class Qwen3VLDataCollator:
 
         # Process with Qwen3VL processor
         # This handles both text tokenization and image preprocessing
-        batch_inputs = self.processor.apply_chat_template(
+
+        # Prepare the conversation text using apply_chat_template first
+        # This will handle the conversation formatting
+        text = self.processor.apply_chat_template(
             texts,
-            images=images if any(img is not None for img in images) else None,
-            tokenize=True,
-            add_generation_prompt=False,  # We don't want generation prompt for training
-            padding=self.padding,
-            max_length=self.max_seq_length,
-            truncation=True,
-            return_dict=True,
-            return_tensors="pt",
+            tokenize=False,  # Get text first, not tokens
+            add_generation_prompt=False,
         )
+
+        # Now use the processor directly with the formatted text and images
+        # This avoids the duplicate images argument issue
+        if any(img is not None for img in images):
+            # Process with images
+            batch_inputs = self.processor(
+                text=text,
+                images=images,
+                padding=self.padding,
+                max_length=self.max_seq_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+        else:
+            # Process without images
+            batch_inputs = self.processor(
+                text=text,
+                padding=self.padding,
+                max_length=self.max_seq_length,
+                truncation=True,
+                return_tensors="pt",
+            )
 
         # Create labels from input_ids
         labels = batch_inputs["input_ids"].clone()

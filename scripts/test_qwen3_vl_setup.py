@@ -145,7 +145,22 @@ try:
     print(f"  - Masked tokens: {num_masked} / {num_total} ({100*num_masked/num_total:.1f}%)")
 
 except Exception as e:
+    import traceback
     print(f"✗ Data collator test failed: {e}")
+    print("\nFull traceback:")
+    traceback.print_exc()
+
+    # Debug: Show batch structure
+    print("\nDebug - Batch structure:")
+    print(f"  Batch length: {len(batch)}")
+    if len(batch) > 0:
+        print(f"  First item keys: {batch[0].keys()}")
+        if 'messages' in batch[0]:
+            print(f"  First item messages: {batch[0]['messages'][:2]}")  # Show first 2 messages
+        if 'image' in batch[0]:
+            img = batch[0]['image']
+            print(f"  First item image: {img.size if img else 'None'}")
+
     sys.exit(1)
 
 # Test 6: Forward pass
