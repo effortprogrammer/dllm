@@ -22,6 +22,7 @@ def load_sft_dataset(
     """
     from dllm.data.alpaca import load_dataset_alpaca
     from dllm.data.opc import load_dataset_opc_sft
+    from dllm.data.ko_document_table import load_dataset_ko_document_table
 
     specs = [p.strip() for p in dataset_args.split("|") if p.strip()]
     all_parts = []
@@ -38,6 +39,8 @@ def load_sft_dataset(
         # Implement your customized dataset here
         elif _match(dataset_name_or_path, "tatsu-lab/alpaca"):
             ds = load_dataset_alpaca(dataset_name_or_path)
+        elif _match(dataset_name_or_path, "jp1924/KoDocumentTableVisualSFT"):
+            ds = load_dataset_ko_document_table(dataset_name_or_path)
         elif _match(dataset_name_or_path, "allenai/tulu-3-sft-mixture"):
             ds = load_dataset(dataset_name_or_path)
             ds = ds["train"].train_test_split(test_size=0.1, seed=42)
