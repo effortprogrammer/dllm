@@ -61,6 +61,10 @@ class ModelArguments(dllm.utils.ModelArguments):
         default=True,
         metadata={"help": "Whether to freeze visual merger (projection layer)"}
     )
+    attn_implementation: str = field(
+        default="eager",
+        metadata={"help": "Attention implementation to use. Options: eager, flash_attention_2, sdpa. Default: eager"}
+    )
 
 
 @dataclass
@@ -118,7 +122,7 @@ def train():
     model = Qwen3VLForMaskedLM.from_pretrained(
         model_args.model_name_or_path,
         torch_dtype=getattr(model_args, "dtype", "bfloat16"),
-        attn_implementation=getattr(model_args, "attn_implementation", "flash_attention_2"),
+        attn_implementation=model_args.attn_implementation,
         device_map={"": accelerate.PartialState().local_process_index}
         if not transformers.modeling_utils.is_deepspeed_zero3_enabled()
         else None,
