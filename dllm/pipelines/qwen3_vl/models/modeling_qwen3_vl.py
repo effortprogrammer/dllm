@@ -108,16 +108,20 @@ class Qwen3VLForMaskedLM(PreTrainedModel):
         )
 
     def get_input_embeddings(self):
-        return self.model.model.embed_tokens
+        # For Qwen3VL, the embeddings are accessed via model.get_input_embeddings()
+        return self.model.get_input_embeddings()
 
     def set_input_embeddings(self, value):
-        self.model.model.embed_tokens = value
+        # For Qwen3VL, set via model.set_input_embeddings()
+        self.model.set_input_embeddings(value)
 
     def get_output_embeddings(self):
-        return self.model.lm_head
+        # For Qwen3VL, access via model.get_output_embeddings()
+        return self.model.get_output_embeddings()
 
     def set_output_embeddings(self, new_embeddings):
-        self.model.lm_head = new_embeddings
+        # For Qwen3VL, set via model.set_output_embeddings()
+        self.model.set_output_embeddings(new_embeddings)
 
     def forward(
         self,
@@ -247,3 +251,7 @@ class Qwen3VLForMaskedLM(PreTrainedModel):
     def gradient_checkpointing_disable(self):
         """Disable gradient checkpointing."""
         self.model.gradient_checkpointing_disable()
+
+    def resize_token_embeddings(self, new_num_tokens=None):
+        """Resize token embeddings."""
+        return self.model.resize_token_embeddings(new_num_tokens)
