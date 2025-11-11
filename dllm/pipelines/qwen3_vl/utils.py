@@ -72,13 +72,21 @@ class Qwen3VLDataCollator:
         actual_images = [img for img in images if img is not None]
 
         # Qwen3VL expects the processor to be called with both text and images
-        # The apply_chat_template is a tokenizer method, not processor method
-        # So we should use the processor's __call__ method directly
+        # We need to apply the chat template to convert messages to strings first
+        formatted_texts = []
+        for conversation in texts:
+            # Apply chat template to convert messages to string
+            formatted_text = self.processor.apply_chat_template(
+                conversation,
+                tokenize=False,  # Don't tokenize yet, just format
+                add_generation_prompt=False
+            )
+            formatted_texts.append(formatted_text)
+
         if actual_images:
             # Process both text and images together
-            # The processor handles chat template internally
             batch_inputs = self.processor(
-                text=texts,  # List of conversations
+                text=formatted_texts,  # List of formatted strings
                 images=actual_images,  # List of images
                 padding=self.padding,
                 max_length=self.max_seq_length,
@@ -88,7 +96,7 @@ class Qwen3VLDataCollator:
         else:
             # No images, just process text
             batch_inputs = self.processor(
-                text=texts,  # List of conversations
+                text=formatted_texts,  # List of formatted strings
                 padding=self.padding,
                 max_length=self.max_seq_length,
                 truncation=True,
