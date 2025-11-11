@@ -22,13 +22,13 @@ class Qwen3VLDataCollator:
     Args:
         processor: Qwen3VL AutoProcessor for handling images and text
         mask_prompt_loss: Whether to mask prompt (user) tokens in loss computation
-        max_seq_length: Maximum sequence length (default: 16000)
+        max_seq_length: Maximum sequence length (default: 8192)
         padding: Padding strategy ("max_length" or "longest")
     """
 
     processor: ProcessorMixin
     mask_prompt_loss: bool = True
-    max_seq_length: int = 16000
+    max_seq_length: int = 8192
     padding: str = "max_length"
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
@@ -251,7 +251,7 @@ class Qwen3VLDataCollator:
         return labels
 
 
-def create_qwen3_vl_collator(processor, mask_prompt_loss=True, max_seq_length=16000):
+def create_qwen3_vl_collator(processor, mask_prompt_loss=True, max_seq_length=8192):
     """
     Factory function to create Qwen3VL data collator.
 
