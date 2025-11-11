@@ -160,6 +160,21 @@ def train():
         model = get_peft_model(model, lora_config)
         model.print_trainable_parameters()
 
+    # Manually apply Liger kernel to the underlying Qwen3-VL base model
+    # before Trainer tries (and fails) to patch our wrapper.
+    if getattr(training_args, "use_liger_kernel", False):
+        try:
+            from liger_kernel.transformers.monkey_patch import apply_liger_kernel_to_qwen3_vl
+
+            kernel_config = training_args.liger_kernel_config or {}
+            dllm.utils.print_main("Applying Liger kernel manually to base Qwen3-VL model...")
+            apply_liger_kernel_to_qwen3_vl(model.model, **kernel_config)
+
+            # Prevent Trainer from re-applying (which would raise on the wrapper).
+            training_args.use_liger_kernel = False
+        except Exception as exc:
+            raise RuntimeError("Failed to apply Liger kernel to Qwen3-VL base model.") from exc
+
     # ----- Processor (tokenizer + image processor) --------------------------------
     dllm.utils.print_main("Loading processor...")
     processor = transformers.AutoProcessor.from_pretrained(
