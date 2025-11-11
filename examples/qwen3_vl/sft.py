@@ -111,6 +111,7 @@ class TrainingArguments(dllm.utils.TrainingArguments):
     group_by_length: bool = False  # Don't group by length for multimodal
     report_to: str = "wandb"
     run_name: Optional[str] = None
+    remove_unused_columns: bool = False  # Required for custom data collator
 
 
 def train():
