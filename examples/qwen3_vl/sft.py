@@ -86,7 +86,7 @@ class DataArguments(dllm.utils.DataArguments):
         metadata={"help": "Whether to mask the loss on the prompt tokens"},
     )
     max_seq_length: int = field(
-        default=8192,
+        default=4096,
         metadata={"help": "Maximum sequence length for training (increased for image tokens)"}
     )
 
