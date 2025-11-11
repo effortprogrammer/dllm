@@ -30,6 +30,7 @@ logger = logging.get_logger(__name__)
 
 
 class Qwen3VLForMaskedLM(PreTrainedModel, GenerationMixin):
+    base_model_prefix = "model"
     """
     Qwen3-VL model wrapper for masked diffusion language modeling.
 
@@ -131,13 +132,6 @@ class Qwen3VLForMaskedLM(PreTrainedModel, GenerationMixin):
     def set_output_embeddings(self, new_embeddings):
         # For Qwen3VL, set via model.set_output_embeddings()
         self.model.set_output_embeddings(new_embeddings)
-
-    def get_base_model(self):
-        """
-        Expose the underlying Qwen3VL model so utilities (e.g., Liger kernel)
-        can operate on the original architecture.
-        """
-        return self.model
 
     def forward(
         self,
