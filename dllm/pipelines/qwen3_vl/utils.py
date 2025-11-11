@@ -97,7 +97,17 @@ class Qwen3VLDataCollator:
                 )
 
                 # Check max length across all samples
-                max_length_in_batch = max(seq.shape[1] for seq in temp_inputs["input_ids"])
+                # Handle both single tensor and list of tensors
+                if isinstance(temp_inputs["input_ids"], torch.Tensor):
+                    # Single batched tensor
+                    if len(temp_inputs["input_ids"].shape) == 2:
+                        max_length_in_batch = temp_inputs["input_ids"].shape[1]
+                    else:
+                        # Single sample
+                        max_length_in_batch = temp_inputs["input_ids"].shape[0]
+                else:
+                    # List of tensors
+                    max_length_in_batch = max(seq.shape[-1] for seq in temp_inputs["input_ids"])
 
                 if max_length_in_batch <= self.max_seq_length:
                     # If it fits, use normal processing with padding
