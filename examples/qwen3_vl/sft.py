@@ -65,6 +65,13 @@ class ModelArguments(dllm.utils.ModelArguments):
         default="eager",
         metadata={"help": "Attention implementation to use. Options: eager, flash_attention_2, sdpa. Default: eager"}
     )
+    # Override target_modules for Qwen3-VL specifically
+    # Language model attention: q_proj, k_proj, v_proj, o_proj
+    # Language model MLP: gate_proj, up_proj, down_proj
+    target_modules: str = field(
+        default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
+        metadata={"help": "LoRA target modules for Qwen3-VL language model"}
+    )
 
 
 @dataclass
@@ -135,19 +142,19 @@ def train():
         dllm.utils.print_main("Applying LoRA to language model...")
         from peft import LoraConfig, get_peft_model
 
+        # Parse target modules
+        target_modules = model_args.target_modules.split(",")
+        dllm.utils.print_main(f"LoRA target modules: {target_modules}")
+
         lora_config = LoraConfig(
-            r=getattr(model_args, "r", 16),
-            lora_alpha=getattr(model_args, "lora_alpha", 32),
-            target_modules=getattr(
-                model_args,
-                "target_modules",
-                "q_proj,k_proj,v_proj,o_proj"
-            ).split(","),
-            lora_dropout=getattr(model_args, "lora_dropout", 0.05),
-            bias="none",
+            r=model_args.r,
+            lora_alpha=model_args.lora_alpha,
+            target_modules=target_modules,
+            lora_dropout=model_args.lora_dropout,
+            bias=model_args.bias,
             task_type="CAUSAL_LM",
-            modules_to_save=getattr(model_args, "modules_to_save", "").split(",")
-            if getattr(model_args, "modules_to_save", "") else None,
+            modules_to_save=model_args.modules_to_save.split(",")
+            if model_args.modules_to_save else None,
         )
         model = get_peft_model(model, lora_config)
         model.print_trainable_parameters()
