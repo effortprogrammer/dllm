@@ -21,6 +21,7 @@ from transformers import (
     Qwen3VLForConditionalGeneration,
     PreTrainedModel,
 )
+from transformers.generation.utils import GenerationMixin
 from transformers.modeling_outputs import MaskedLMOutput
 from transformers.utils import logging
 
@@ -28,7 +29,7 @@ from transformers.utils import logging
 logger = logging.get_logger(__name__)
 
 
-class Qwen3VLForMaskedLM(PreTrainedModel):
+class Qwen3VLForMaskedLM(PreTrainedModel, GenerationMixin):
     """
     Qwen3-VL model wrapper for masked diffusion language modeling.
 
@@ -95,6 +96,14 @@ class Qwen3VLForMaskedLM(PreTrainedModel):
         # Count total parameters
         for param in self.parameters():
             total_params += param.numel()
+
+        if total_params == 0:
+            logger.warning(
+                "⚠️  No parameters detected while freezing vision components; "
+                "this typically happens before DeepSpeed ZeRO-3 materializes weights. "
+                "Skipping freeze statistics."
+            )
+            return
 
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
 
