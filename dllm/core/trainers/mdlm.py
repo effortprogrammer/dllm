@@ -73,7 +73,14 @@ class MDLMTrainer(transformers.Trainer):
         return_outputs: bool = False,
         **kwargs,
     ):
-        assert self.processing_class.padding_side == "right"
+        # Check padding side from either tokenizer or processor
+        if hasattr(self, 'processing_class') and self.processing_class is not None:
+            if hasattr(self.processing_class, 'padding_side'):
+                assert self.processing_class.padding_side == "right"
+            elif hasattr(self.processing_class, 'tokenizer'):
+                assert self.processing_class.tokenizer.padding_side == "right"
+        elif hasattr(self, 'tokenizer') and self.tokenizer is not None:
+            assert self.tokenizer.padding_side == "right"
         self._preprocess_inputs(inputs)
         input_ids, labels, attention_mask = (
             inputs["input_ids"],
@@ -97,13 +104,38 @@ class MDLMTrainer(transformers.Trainer):
             labels != -100
         )
         # Replace masked tokens with the special [MASK] token.
+        # Get mask_token_id from either tokenizer or processor
+        if hasattr(self, 'processing_class') and self.processing_class is not None:
+            if hasattr(self.processing_class, 'mask_token_id'):
+                mask_token_id = self.processing_class.mask_token_id
+            elif hasattr(self.processing_class, 'tokenizer'):
+                mask_token_id = self.processing_class.tokenizer.mask_token_id
+            else:
+                raise ValueError("Could not find mask_token_id in processing_class")
+        elif hasattr(self, 'tokenizer') and self.tokenizer is not None:
+            mask_token_id = self.tokenizer.mask_token_id
+        else:
+            raise ValueError("No tokenizer or processing_class found")
+
         noised_input_ids = torch.where(
-            masked_indices, self.processing_class.mask_token_id, input_ids
+            masked_indices, mask_token_id, input_ids
         )
 
         # === 3. Forward pass through the model ===
         # The model predicts clean tokens given noised inputs.
-        outputs = model(input_ids=noised_input_ids, attention_mask=attention_mask)
+        # Create model inputs, preserving vision tensors for multi-modal models
+        model_inputs = {
+            "input_ids": noised_input_ids,
+            "attention_mask": attention_mask
+        }
+
+        # Add vision-related inputs if present (for Qwen3-VL and other vision models)
+        vision_keys = ["pixel_values", "image_grid_thw", "video_grid_thw", "rope_deltas"]
+        for key in vision_keys:
+            if key in inputs:
+                model_inputs[key] = inputs[key]
+
+        outputs = model(**model_inputs)
         self._postprocess_outputs(outputs)
         logits = outputs.logits
 

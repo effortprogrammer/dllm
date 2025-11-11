@@ -213,6 +213,7 @@ def train():
         train_dataset=dataset["train"],
         eval_dataset=dataset.get("test", None),
         data_collator=data_collator,
+        processing_class=processor,  # Add processor for MDLMTrainer
     )
 
     # Train
