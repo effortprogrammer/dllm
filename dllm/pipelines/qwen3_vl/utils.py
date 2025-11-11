@@ -80,70 +80,59 @@ class Qwen3VLDataCollator:
             )
             formatted_texts.append(formatted_text)
 
-        # Filter out None images for processing
-        actual_images = [img for img in images if img is not None]
+        # Process samples - handling images and text separately for better control
+        # Process each sample individually first to handle mixed batches properly
+        processed_samples = []
 
-        # Process samples - for Qwen3-VL we need to be careful with image token truncation
-        if actual_images:
-            # For image inputs, we need to ensure image tokens aren't truncated
-            # First, try without truncation to see if it fits
+        for i, formatted_text in enumerate(formatted_texts):
+            image = images[i]
+
             try:
-                # Process without truncation first
-                temp_inputs = self.processor(
-                    text=formatted_texts,
-                    images=actual_images,
-                    padding=False,
-                    return_tensors="pt",
-                )
-
-                # Check max length across all samples
-                # Handle both single tensor and list of tensors
-                if isinstance(temp_inputs["input_ids"], torch.Tensor):
-                    # Single batched tensor
-                    if len(temp_inputs["input_ids"].shape) == 2:
-                        max_length_in_batch = temp_inputs["input_ids"].shape[1]
-                    else:
-                        # Single sample
-                        max_length_in_batch = temp_inputs["input_ids"].shape[0]
-                else:
-                    # List of tensors
-                    max_length_in_batch = max(seq.shape[-1] for seq in temp_inputs["input_ids"])
-
-                if max_length_in_batch <= self.max_seq_length:
-                    # If it fits, use normal processing with padding
-                    batch_inputs = self.processor(
-                        text=formatted_texts,
-                        images=actual_images,
-                        padding=self.padding,
-                        max_length=self.max_seq_length,
-                        truncation=False,
-                        return_tensors="pt",
-                    )
-                else:
-                    # If too long, we need to be more careful
-                    # For now, skip images if the sequence is too long
-                    print(f"Warning: Sequence too long ({max_length_in_batch} > {self.max_seq_length}), processing without images")
-                    batch_inputs = self.processor(
-                        text=formatted_texts,
-                        padding=self.padding,
-                        max_length=self.max_seq_length,
+                if image is not None:
+                    # Process with image
+                    sample_inputs = self.processor(
+                        text=formatted_text,
+                        images=image,
+                        padding=False,  # Don't pad individual samples yet
                         truncation=True,
-                        return_tensors="pt",
+                        max_length=self.max_seq_length,
+                        return_tensors=None,  # Don't convert to tensors yet
                     )
+                else:
+                    # Process text-only
+                    sample_inputs = self.processor(
+                        text=formatted_text,
+                        padding=False,  # Don't pad individual samples yet
+                        truncation=True,
+                        max_length=self.max_seq_length,
+                        return_tensors=None,  # Don't convert to tensors yet
+                    )
+                processed_samples.append(sample_inputs)
             except Exception as e:
-                # Fallback to text-only if any error
-                print(f"Warning: Error processing with images: {e}, falling back to text-only")
-                batch_inputs = self.processor(
-                    text=formatted_texts,
-                    padding=self.padding,
-                    max_length=self.max_seq_length,
+                # If individual sample fails, try text-only
+                print(f"Warning: Error processing sample {i} with image: {e}, falling back to text-only")
+                sample_inputs = self.processor(
+                    text=formatted_text,
+                    padding=False,
                     truncation=True,
-                    return_tensors="pt",
+                    max_length=self.max_seq_length,
+                    return_tensors=None,
                 )
-        else:
-            # No images, just process text
+                processed_samples.append(sample_inputs)
+
+        # Now pad all samples together to create the batch
+        try:
+            batch_inputs = self.processor.tokenizer.pad(
+                processed_samples,
+                padding=self.padding,
+                max_length=self.max_seq_length if self.padding == "max_length" else None,
+                return_tensors="pt",
+            )
+        except Exception as e:
+            print(f"Warning: Error creating batch: {e}")
+            # Fallback: process all as text-only with padding
             batch_inputs = self.processor(
-                text=formatted_texts,  # List of formatted strings
+                text=formatted_texts,
                 padding=self.padding,
                 max_length=self.max_seq_length,
                 truncation=True,
