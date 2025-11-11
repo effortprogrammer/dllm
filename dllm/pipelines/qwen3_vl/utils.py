@@ -29,7 +29,7 @@ class Qwen3VLDataCollator:
     processor: ProcessorMixin
     mask_prompt_loss: bool = True
     max_seq_length: int = 4096
-    padding: str = "longest"
+    padding: str = "max_length"
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         """
@@ -68,6 +68,9 @@ class Qwen3VLDataCollator:
         # The processor.apply_chat_template handles the text formatting,
         # while the full processor call handles both text and images
 
+        # Filter out None images for processing
+        actual_images = [img for img in images if img is not None]
+
         # Qwen3VL expects the processor to be called with both text and images
         # We need to apply the chat template to convert messages to strings first
         formatted_texts = []
@@ -80,59 +83,34 @@ class Qwen3VLDataCollator:
             )
             formatted_texts.append(formatted_text)
 
-        # Process samples - handling images and text separately for better control
-        # Process each sample individually first to handle mixed batches properly
-        processed_samples = []
-
-        for i, formatted_text in enumerate(formatted_texts):
-            image = images[i]
-
-            try:
-                if image is not None:
-                    # Process with image
-                    sample_inputs = self.processor(
-                        text=formatted_text,
-                        images=image,
-                        padding=False,  # Don't pad individual samples yet
-                        truncation=True,
-                        max_length=self.max_seq_length,
-                        return_tensors=None,  # Don't convert to tensors yet
-                    )
-                else:
-                    # Process text-only
-                    sample_inputs = self.processor(
-                        text=formatted_text,
-                        padding=False,  # Don't pad individual samples yet
-                        truncation=True,
-                        max_length=self.max_seq_length,
-                        return_tensors=None,  # Don't convert to tensors yet
-                    )
-                processed_samples.append(sample_inputs)
-            except Exception as e:
-                # If individual sample fails, try text-only
-                print(f"Warning: Error processing sample {i} with image: {e}, falling back to text-only")
-                sample_inputs = self.processor(
-                    text=formatted_text,
-                    padding=False,
-                    truncation=True,
-                    max_length=self.max_seq_length,
-                    return_tensors=None,
-                )
-                processed_samples.append(sample_inputs)
-
-        # Now pad all samples together to create the batch
-        try:
-            batch_inputs = self.processor.tokenizer.pad(
-                processed_samples,
+        if actual_images:
+            # Process both text and images together
+            # For image inputs, we need more tokens due to image placeholders
+            # Either increase max_length or disable truncation to avoid mismatch
+            batch_inputs = self.processor(
+                text=formatted_texts,  # List of formatted strings
+                images=actual_images,  # List of images
                 padding=self.padding,
-                max_length=self.max_seq_length if self.padding == "max_length" else None,
+                max_length=self.max_seq_length,
+                truncation=False,  # Disable truncation for images to avoid token mismatch
                 return_tensors="pt",
             )
-        except Exception as e:
-            print(f"Warning: Error creating batch: {e}")
-            # Fallback: process all as text-only with padding
+
+            # If sequences are too long, manually truncate after processing
+            if batch_inputs["input_ids"].shape[1] > self.max_seq_length:
+                # Truncate all tensors to max_seq_length
+                batch_inputs["input_ids"] = batch_inputs["input_ids"][:, :self.max_seq_length]
+                batch_inputs["attention_mask"] = batch_inputs["attention_mask"][:, :self.max_seq_length]
+                if "pixel_values" in batch_inputs:
+                    # pixel_values shape is different, don't truncate
+                    pass
+                if "image_grid_thw" in batch_inputs:
+                    # image_grid_thw is metadata, don't truncate
+                    pass
+        else:
+            # No images, just process text
             batch_inputs = self.processor(
-                text=formatted_texts,
+                text=formatted_texts,  # List of formatted strings
                 padding=self.padding,
                 max_length=self.max_seq_length,
                 truncation=True,
