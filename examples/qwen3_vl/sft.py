@@ -209,6 +209,7 @@ def train():
 
     # Disable evaluation entirely until we re-enable it intentionally.
     training_args.evaluation_strategy = transformers.IntervalStrategy.NO
+    training_args.eval_strategy = transformers.IntervalStrategy.NO
 
     trainer = Qwen3VLTrainer(
         model=model,
