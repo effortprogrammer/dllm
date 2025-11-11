@@ -82,19 +82,19 @@ class Qwen3VLTrainer(MDLMTrainer):
         1. Preprocesses inputs (device placement for vision tensors)
         2. Calls parent MDLMTrainer.compute_loss() which:
            - Samples diffusion timesteps
-           - Applies stochastic masking
+           - Applies stochastic masking (excluding positions with label=-100)
            - Computes weighted cross-entropy loss
         3. Returns loss (and optionally outputs)
 
-        The parent's compute_loss handles all diffusion-specific logic,
-        we just need to ensure inputs are properly formatted.
+        Note: Image tokens are already marked with -100 in labels by the data collator,
+        so they will not be masked during diffusion training.
 
         Args:
             model: Qwen3VLForMaskedLM model
             inputs: Dictionary with keys:
                 - input_ids: (batch, seq_len)
                 - attention_mask: (batch, seq_len)
-                - labels: (batch, seq_len)
+                - labels: (batch, seq_len) with -100 for masked positions
                 - pixel_values: (batch, channels, height, width) or None
                 - image_grid_thw: (batch, 3) or None
             return_outputs: Whether to return model outputs
@@ -109,7 +109,7 @@ class Qwen3VLTrainer(MDLMTrainer):
         # Call parent's compute_loss which handles the diffusion logic
         # The parent will:
         # 1. Sample timesteps t
-        # 2. Apply masking according to α(t)
+        # 2. Apply masking according to α(t) (but not to positions with label=-100)
         # 3. Forward through model
         # 4. Compute weighted loss
         return super().compute_loss(model, inputs, return_outputs=return_outputs, **kwargs)

@@ -113,6 +113,19 @@ class Qwen3VLDataCollator:
         # Mask padding tokens in labels
         labels[labels == self.processor.tokenizer.pad_token_id] = -100
 
+        # IMPORTANT: Also mask vision/image tokens in labels
+        # These tokens represent image features and should not be predicted
+        vision_tokens = ["<|image_pad|>", "<|vision_start|>", "<|vision_end|>",
+                        "<|vision_pad|>", "<|video_pad|>"]
+
+        tokenizer = self.processor.tokenizer
+        vocab = tokenizer.get_vocab()
+
+        for token in vision_tokens:
+            if token in vocab:
+                token_id = tokenizer.convert_tokens_to_ids(token)
+                labels[labels == token_id] = -100
+
         # Add labels to batch
         batch_inputs["labels"] = labels
 
