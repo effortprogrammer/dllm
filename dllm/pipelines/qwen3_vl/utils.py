@@ -94,14 +94,9 @@ class Qwen3VLDataCollator:
                 "return_tensors": "pt",
             }
 
-            # When we pad to a fixed length we must also truncate before tensor conversion;
-            # otherwise batches with longer sequences (common during eval) raise errors.
-            if self.padding == "max_length" and self.max_seq_length is not None:
-                processor_kwargs["max_length"] = self.max_seq_length
-                processor_kwargs["truncation"] = True
-            else:
-                processor_kwargs["max_length"] = self.max_seq_length
-                processor_kwargs["truncation"] = False
+            # Keep truncation disabled so multimodal special tokens stay aligned with images.
+            processor_kwargs["max_length"] = self.max_seq_length
+            processor_kwargs["truncation"] = False
 
             batch_inputs = self.processor(**processor_kwargs)
 
