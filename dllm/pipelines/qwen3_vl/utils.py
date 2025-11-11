@@ -29,7 +29,7 @@ class Qwen3VLDataCollator:
     processor: ProcessorMixin
     mask_prompt_loss: bool = True
     max_seq_length: int = 4096
-    padding: str = "max_length"
+    padding: str = "longest"
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         """
@@ -86,27 +86,15 @@ class Qwen3VLDataCollator:
         if actual_images:
             # Process both text and images together
             # For image inputs, we need more tokens due to image placeholders
-            # Either increase max_length or disable truncation to avoid mismatch
+            # Use truncation to ensure consistent batch sizes
             batch_inputs = self.processor(
                 text=formatted_texts,  # List of formatted strings
                 images=actual_images,  # List of images
                 padding=self.padding,
                 max_length=self.max_seq_length,
-                truncation=False,  # Disable truncation for images to avoid token mismatch
+                truncation=True,  # Enable truncation to prevent size mismatch
                 return_tensors="pt",
             )
-
-            # If sequences are too long, manually truncate after processing
-            if batch_inputs["input_ids"].shape[1] > self.max_seq_length:
-                # Truncate all tensors to max_seq_length
-                batch_inputs["input_ids"] = batch_inputs["input_ids"][:, :self.max_seq_length]
-                batch_inputs["attention_mask"] = batch_inputs["attention_mask"][:, :self.max_seq_length]
-                if "pixel_values" in batch_inputs:
-                    # pixel_values shape is different, don't truncate
-                    pass
-                if "image_grid_thw" in batch_inputs:
-                    # image_grid_thw is metadata, don't truncate
-                    pass
         else:
             # No images, just process text
             batch_inputs = self.processor(
