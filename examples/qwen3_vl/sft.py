@@ -207,11 +207,14 @@ def train():
     accelerate.PartialState().wait_for_everyone()
     dllm.utils.print_main("Starting training...")
 
+    # Disable evaluation entirely until we re-enable it intentionally.
+    training_args.evaluation_strategy = transformers.IntervalStrategy.NO
+
     trainer = Qwen3VLTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset["train"],
-        eval_dataset=dataset.get("test", None),
+        eval_dataset=None,
         data_collator=data_collator,
         processing_class=processor,  # Add processor for MDLMTrainer
     )
