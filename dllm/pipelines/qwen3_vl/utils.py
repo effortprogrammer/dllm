@@ -3,9 +3,10 @@
 """Data collator and utilities for Qwen3-VL training"""
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import logging
 import torch
+from datasets import DatasetDict
 from transformers import ProcessorMixin
 
 
@@ -52,11 +53,8 @@ class Qwen3VLDataCollator:
                 - pixel_values: (batch, channels, height, width) or None
                 - image_grid_thw: (batch, 3) with (temporal, height, width) or None
         """
-        # Separate images and messages
-        valid_records = []
-        dropped_overlength = 0
-        sample_records = []
-        force_truncation = False
+        images = []
+        texts = []
 
         for feature in features:
             image = feature.get("image", None)
@@ -64,60 +62,17 @@ class Qwen3VLDataCollator:
 
             qwen_messages = self._convert_to_qwen_format(messages, has_image=(image is not None))
 
+            images.append(image)
+            texts.append(qwen_messages)
+
+        formatted_texts = []
+        for conversation in texts:
             formatted_text = self.processor.apply_chat_template(
-                qwen_messages,
+                conversation,
                 tokenize=False,
                 add_generation_prompt=False
             )
-
-            length_check_kwargs = {
-                "text": [formatted_text],
-                "padding": False,
-                "truncation": False,
-                "return_tensors": "pt",
-            }
-            if image is not None:
-                length_check_kwargs["images"] = [image]
-
-            token_preview = self.processor(**length_check_kwargs)
-            seq_len = token_preview["input_ids"].shape[-1]
-
-            sample_records.append({
-                "image": image,
-                "messages": qwen_messages,
-                "formatted_text": formatted_text,
-                "seq_len": seq_len,
-            })
-
-        for record in sample_records:
-            if self.max_seq_length is not None and record["seq_len"] > self.max_seq_length:
-                dropped_overlength += 1
-                continue
-            valid_records.append(record)
-
-        if not valid_records:
-            # Fallback to the shortest sample to keep dataloader running, but warn loudly.
-            shortest = min(sample_records, key=lambda r: r["seq_len"])
-            force_truncation = True
-            logger.warning(
-                "All samples in the batch exceeded max_seq_length=%s. "
-                "Keeping the shortest sample (len=%s) with truncation.",
-                self.max_seq_length,
-                shortest["seq_len"],
-            )
-            valid_records = [shortest]
-
-        if dropped_overlength:
-            logger.debug(
-                "Dropped %d overlength samples (max_seq_length=%s).",
-                dropped_overlength,
-                self.max_seq_length,
-            )
-
-        images = [record["image"] for record in valid_records]
-        texts = [record["messages"] for record in valid_records]
-
-        formatted_texts = [record["formatted_text"] for record in valid_records]
+            formatted_texts.append(formatted_text)
 
         actual_images = [img for img in images if img is not None]
 
@@ -128,16 +83,11 @@ class Qwen3VLDataCollator:
             processor_kwargs = {
                 "text": formatted_texts,
                 "images": actual_images,
-                "padding": "longest" if not force_truncation else self.padding,
+                "padding": self.padding,
+                "max_length": self.max_seq_length,
+                "truncation": False,
                 "return_tensors": "pt",
             }
-
-            # Keep truncation disabled so multimodal special tokens stay aligned with images.
-            if force_truncation:
-                processor_kwargs["max_length"] = self.max_seq_length
-                processor_kwargs["truncation"] = True
-            else:
-                processor_kwargs["truncation"] = False
 
             batch_inputs = self.processor(**processor_kwargs)
 
@@ -154,26 +104,13 @@ class Qwen3VLDataCollator:
                     pass
         else:
             # No images, just process text
-            text_kwargs = {
-                "text": formatted_texts,
-                "return_tensors": "pt",
-            }
-            if force_truncation:
-                text_kwargs.update(
-                    padding=self.padding,
-                    max_length=self.max_seq_length,
-                    truncation=True,
-                )
-            else:
-                text_kwargs.update(
-                    padding="longest",
-                    truncation=False,
-                )
-            batch_inputs = self.processor(**text_kwargs)
-
-        # If we processed without padding to max_length, pad manually now.
-        if not force_truncation and self.padding == "max_length" and self.max_seq_length is not None:
-            batch_inputs = self._pad_to_max_length(batch_inputs)
+            batch_inputs = self.processor(
+                text=formatted_texts,
+                padding=self.padding,
+                max_length=self.max_seq_length,
+                truncation=True,
+                return_tensors="pt",
+            )
 
         # Create labels from input_ids
         labels = batch_inputs["input_ids"].clone()
@@ -308,30 +245,6 @@ class Qwen3VLDataCollator:
 
         return labels
 
-    def _pad_to_max_length(self, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """
-        Pad variable-length tensors in batch_inputs to max_seq_length.
-        """
-        if self.max_seq_length is None:
-            return batch_inputs
-
-        target = self.max_seq_length
-        pad_id = self.processor.tokenizer.pad_token_id
-
-        def _pad_tensor(tensor, pad_value=0):
-            if tensor.shape[1] >= target:
-                return tensor[:, :target]
-            pad_width = target - tensor.shape[1]
-            padding = (0, pad_width)
-            return torch.nn.functional.pad(tensor, padding, value=pad_value)
-
-        if "input_ids" in batch_inputs:
-            batch_inputs["input_ids"] = _pad_tensor(batch_inputs["input_ids"], pad_id)
-        if "attention_mask" in batch_inputs:
-            batch_inputs["attention_mask"] = _pad_tensor(batch_inputs["attention_mask"], 0)
-
-        return batch_inputs
-
 
 def create_qwen3_vl_collator(processor, mask_prompt_loss=True, max_seq_length=4096):
     """
@@ -350,3 +263,60 @@ def create_qwen3_vl_collator(processor, mask_prompt_loss=True, max_seq_length=40
         mask_prompt_loss=mask_prompt_loss,
         max_seq_length=max_seq_length,
     )
+
+
+def filter_overlength_samples(
+    dataset: DatasetDict,
+    collator: Qwen3VLDataCollator,
+    max_seq_length: Optional[int],
+    num_proc: int = 1,
+) -> DatasetDict:
+    """
+    Remove samples whose tokenized length exceeds max_seq_length.
+    """
+    if max_seq_length is None:
+        return dataset
+
+    def _within_limit(example):
+        image = example.get("image", None)
+        messages = example.get("messages", [])
+        qwen_messages = collator._convert_to_qwen_format(messages, has_image=image is not None)
+        formatted_text = collator.processor.apply_chat_template(
+            qwen_messages,
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+
+        processor_kwargs = {
+            "text": [formatted_text],
+            "padding": False,
+            "truncation": False,
+            "return_tensors": "pt",
+        }
+        if image is not None:
+            processor_kwargs["images"] = [image]
+
+        inputs = collator.processor(**processor_kwargs)
+        seq_len = inputs["input_ids"].shape[-1]
+
+        return seq_len <= max_seq_length
+
+    filtered = {}
+    for split_name, split_data in dataset.items():
+        before = len(split_data)
+        filtered_split = split_data.filter(
+            _within_limit,
+            num_proc=num_proc,
+            desc=f"Filtering overlength samples ({split_name})",
+        )
+        after = len(filtered_split)
+        logger.info(
+            "Filtered %d/%d samples above max_seq_length=%s in split '%s'",
+            before - after,
+            before,
+            max_seq_length,
+            split_name,
+        )
+        filtered[split_name] = filtered_split
+
+    return DatasetDict(filtered)

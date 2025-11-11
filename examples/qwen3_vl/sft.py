@@ -44,7 +44,10 @@ import accelerate
 import dllm
 from dllm.pipelines.qwen3_vl import Qwen3VLForMaskedLM
 from dllm.pipelines.qwen3_vl.trainer import Qwen3VLTrainer
-from dllm.pipelines.qwen3_vl.utils import create_qwen3_vl_collator
+from dllm.pipelines.qwen3_vl.utils import (
+    create_qwen3_vl_collator,
+    filter_overlength_samples,
+)
 
 
 @dataclass
@@ -88,6 +91,10 @@ class DataArguments(dllm.utils.DataArguments):
     max_seq_length: int = field(
         default=4096,
         metadata={"help": "Maximum sequence length for training (increased for image tokens)"}
+    )
+    filter_overlength_examples: bool = field(
+        default=True,
+        metadata={"help": "Remove samples whose tokenized length exceeds max_seq_length"}
     )
 
 
@@ -207,6 +214,17 @@ def train():
         )
 
         dllm.utils.print_main(f"Dataset loaded: train={len(dataset['train'])}, test={len(dataset.get('test', []))}")
+
+        if data_args.filter_overlength_examples:
+            dllm.utils.print_main(
+                f"Filtering samples longer than {data_args.max_seq_length} tokens..."
+            )
+            dataset = filter_overlength_samples(
+                dataset,
+                data_collator,
+                data_args.max_seq_length,
+                num_proc=1,
+            )
 
         # Note: We don't apply tokenization here because Qwen3VLDataCollator
         # will handle both image and text processing together
