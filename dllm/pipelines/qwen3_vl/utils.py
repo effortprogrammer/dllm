@@ -87,14 +87,23 @@ class Qwen3VLDataCollator:
             # Process both text and images together
             # For image inputs, we need more tokens due to image placeholders
             # Either increase max_length or disable truncation to avoid mismatch
-            batch_inputs = self.processor(
-                text=formatted_texts,  # List of formatted strings
-                images=actual_images,  # List of images
-                padding=self.padding,
-                max_length=self.max_seq_length,
-                truncation=False,  # Disable truncation for images to avoid token mismatch
-                return_tensors="pt",
-            )
+            processor_kwargs = {
+                "text": formatted_texts,
+                "images": actual_images,
+                "padding": self.padding,
+                "return_tensors": "pt",
+            }
+
+            # When we pad to a fixed length we must also truncate before tensor conversion;
+            # otherwise batches with longer sequences (common during eval) raise errors.
+            if self.padding == "max_length" and self.max_seq_length is not None:
+                processor_kwargs["max_length"] = self.max_seq_length
+                processor_kwargs["truncation"] = True
+            else:
+                processor_kwargs["max_length"] = self.max_seq_length
+                processor_kwargs["truncation"] = False
+
+            batch_inputs = self.processor(**processor_kwargs)
 
             # If sequences are too long, manually truncate after processing
             if batch_inputs["input_ids"].shape[1] > self.max_seq_length:
