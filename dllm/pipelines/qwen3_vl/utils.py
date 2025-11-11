@@ -128,13 +128,16 @@ class Qwen3VLDataCollator:
             processor_kwargs = {
                 "text": formatted_texts,
                 "images": actual_images,
-                "padding": self.padding,
+                "padding": "longest" if not force_truncation else self.padding,
                 "return_tensors": "pt",
             }
 
             # Keep truncation disabled so multimodal special tokens stay aligned with images.
-            processor_kwargs["max_length"] = self.max_seq_length
-            processor_kwargs["truncation"] = force_truncation
+            if force_truncation:
+                processor_kwargs["max_length"] = self.max_seq_length
+                processor_kwargs["truncation"] = True
+            else:
+                processor_kwargs["truncation"] = False
 
             batch_inputs = self.processor(**processor_kwargs)
 
@@ -151,13 +154,26 @@ class Qwen3VLDataCollator:
                     pass
         else:
             # No images, just process text
-            batch_inputs = self.processor(
-                text=formatted_texts,  # List of formatted strings
-                padding=self.padding,
-                max_length=self.max_seq_length,
-                truncation=True,
-                return_tensors="pt",
-            )
+            text_kwargs = {
+                "text": formatted_texts,
+                "return_tensors": "pt",
+            }
+            if force_truncation:
+                text_kwargs.update(
+                    padding=self.padding,
+                    max_length=self.max_seq_length,
+                    truncation=True,
+                )
+            else:
+                text_kwargs.update(
+                    padding="longest",
+                    truncation=False,
+                )
+            batch_inputs = self.processor(**text_kwargs)
+
+        # If we processed without padding to max_length, pad manually now.
+        if not force_truncation and self.padding == "max_length" and self.max_seq_length is not None:
+            batch_inputs = self._pad_to_max_length(batch_inputs)
 
         # Create labels from input_ids
         labels = batch_inputs["input_ids"].clone()
@@ -291,6 +307,30 @@ class Qwen3VLDataCollator:
                     labels[idx, :first_assistant_token_pos] = -100
 
         return labels
+
+    def _pad_to_max_length(self, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """
+        Pad variable-length tensors in batch_inputs to max_seq_length.
+        """
+        if self.max_seq_length is None:
+            return batch_inputs
+
+        target = self.max_seq_length
+        pad_id = self.processor.tokenizer.pad_token_id
+
+        def _pad_tensor(tensor, pad_value=0):
+            if tensor.shape[1] >= target:
+                return tensor[:, :target]
+            pad_width = target - tensor.shape[1]
+            padding = (0, pad_width)
+            return torch.nn.functional.pad(tensor, padding, value=pad_value)
+
+        if "input_ids" in batch_inputs:
+            batch_inputs["input_ids"] = _pad_tensor(batch_inputs["input_ids"], pad_id)
+        if "attention_mask" in batch_inputs:
+            batch_inputs["attention_mask"] = _pad_tensor(batch_inputs["attention_mask"], 0)
+
+        return batch_inputs
 
 
 def create_qwen3_vl_collator(processor, mask_prompt_loss=True, max_seq_length=4096):
