@@ -204,6 +204,13 @@ def train():
             model.resize_token_embeddings(len(processor.tokenizer))
             dllm.utils.print_main(f"Added {num_added_toks} special tokens (mask_token)")
 
+    # ----- Data Collator ----------------------------------------------------------
+    data_collator = create_qwen3_vl_collator(
+        processor=processor,
+        mask_prompt_loss=data_args.mask_prompt_loss,
+        max_seq_length=data_args.max_seq_length,
+    )
+
     # ----- Dataset ----------------------------------------------------------------
     dllm.utils.print_main("Loading dataset...")
     with accelerate.PartialState().local_main_process_first():
@@ -228,13 +235,6 @@ def train():
 
         # Note: We don't apply tokenization here because Qwen3VLDataCollator
         # will handle both image and text processing together
-
-    # ----- Data Collator ----------------------------------------------------------
-    data_collator = create_qwen3_vl_collator(
-        processor=processor,
-        mask_prompt_loss=data_args.mask_prompt_loss,
-        max_seq_length=data_args.max_seq_length,
-    )
 
     # ----- Training ---------------------------------------------------------------
     accelerate.PartialState().wait_for_everyone()
