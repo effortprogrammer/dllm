@@ -64,23 +64,36 @@ class Qwen3VLDataCollator:
             texts.append(qwen_messages)
 
         # Process with Qwen3VL processor
-        # This handles both text tokenization and image preprocessing
-        # Use apply_chat_template directly with all parameters
+        # For Qwen3VL, we need to handle text and images together properly
+        # The processor.apply_chat_template handles the text formatting,
+        # while the full processor call handles both text and images
 
-        # Check if we have images and prepare them
-        has_images = any(img is not None for img in images)
+        # Filter out None images for processing
+        actual_images = [img for img in images if img is not None]
 
-        # Apply chat template with tokenization and image processing
-        batch_inputs = self.processor.apply_chat_template(
-            texts,
-            images=images if has_images else None,
-            tokenize=True,
-            add_generation_prompt=False,
-            padding=self.padding,
-            max_length=self.max_seq_length,
-            truncation=True,
-            return_tensors="pt",
-        )
+        # Qwen3VL expects the processor to be called with both text and images
+        # The apply_chat_template is a tokenizer method, not processor method
+        # So we should use the processor's __call__ method directly
+        if actual_images:
+            # Process both text and images together
+            # The processor handles chat template internally
+            batch_inputs = self.processor(
+                text=texts,  # List of conversations
+                images=actual_images,  # List of images
+                padding=self.padding,
+                max_length=self.max_seq_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+        else:
+            # No images, just process text
+            batch_inputs = self.processor(
+                text=texts,  # List of conversations
+                padding=self.padding,
+                max_length=self.max_seq_length,
+                truncation=True,
+                return_tensors="pt",
+            )
 
         # Create labels from input_ids
         labels = batch_inputs["input_ids"].clone()
