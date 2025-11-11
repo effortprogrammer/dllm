@@ -4,8 +4,12 @@
 
 from dataclasses import dataclass
 from typing import Any, Dict, List
+import logging
 import torch
 from transformers import ProcessorMixin
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,39 +53,73 @@ class Qwen3VLDataCollator:
                 - image_grid_thw: (batch, 3) with (temporal, height, width) or None
         """
         # Separate images and messages
-        images = []
-        texts = []
+        valid_records = []
+        dropped_overlength = 0
+        sample_records = []
+        force_truncation = False
 
         for feature in features:
             image = feature.get("image", None)
             messages = feature.get("messages", [])
 
-            # Convert messages to Qwen3VL format
-            # Qwen3VL expects: [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "..."}]}, ...]
             qwen_messages = self._convert_to_qwen_format(messages, has_image=(image is not None))
 
-            images.append(image)
-            texts.append(qwen_messages)
-
-        # Process with Qwen3VL processor
-        # For Qwen3VL, we need to handle text and images together properly
-        # The processor.apply_chat_template handles the text formatting,
-        # while the full processor call handles both text and images
-
-        # Filter out None images for processing
-        actual_images = [img for img in images if img is not None]
-
-        # Qwen3VL expects the processor to be called with both text and images
-        # We need to apply the chat template to convert messages to strings first
-        formatted_texts = []
-        for conversation in texts:
-            # Apply chat template to convert messages to string
             formatted_text = self.processor.apply_chat_template(
-                conversation,
-                tokenize=False,  # Don't tokenize yet, just format
+                qwen_messages,
+                tokenize=False,
                 add_generation_prompt=False
             )
-            formatted_texts.append(formatted_text)
+
+            length_check_kwargs = {
+                "text": [formatted_text],
+                "padding": False,
+                "truncation": False,
+                "return_tensors": "pt",
+            }
+            if image is not None:
+                length_check_kwargs["images"] = [image]
+
+            token_preview = self.processor(**length_check_kwargs)
+            seq_len = token_preview["input_ids"].shape[-1]
+
+            sample_records.append({
+                "image": image,
+                "messages": qwen_messages,
+                "formatted_text": formatted_text,
+                "seq_len": seq_len,
+            })
+
+        for record in sample_records:
+            if self.max_seq_length is not None and record["seq_len"] > self.max_seq_length:
+                dropped_overlength += 1
+                continue
+            valid_records.append(record)
+
+        if not valid_records:
+            # Fallback to the shortest sample to keep dataloader running, but warn loudly.
+            shortest = min(sample_records, key=lambda r: r["seq_len"])
+            force_truncation = True
+            logger.warning(
+                "All samples in the batch exceeded max_seq_length=%s. "
+                "Keeping the shortest sample (len=%s) with truncation.",
+                self.max_seq_length,
+                shortest["seq_len"],
+            )
+            valid_records = [shortest]
+
+        if dropped_overlength:
+            logger.debug(
+                "Dropped %d overlength samples (max_seq_length=%s).",
+                dropped_overlength,
+                self.max_seq_length,
+            )
+
+        images = [record["image"] for record in valid_records]
+        texts = [record["messages"] for record in valid_records]
+
+        formatted_texts = [record["formatted_text"] for record in valid_records]
+
+        actual_images = [img for img in images if img is not None]
 
         if actual_images:
             # Process both text and images together
@@ -96,7 +134,7 @@ class Qwen3VLDataCollator:
 
             # Keep truncation disabled so multimodal special tokens stay aligned with images.
             processor_kwargs["max_length"] = self.max_seq_length
-            processor_kwargs["truncation"] = False
+            processor_kwargs["truncation"] = force_truncation
 
             batch_inputs = self.processor(**processor_kwargs)
 
