@@ -22,13 +22,13 @@ class Qwen3VLDataCollator:
     Args:
         processor: Qwen3VL AutoProcessor for handling images and text
         mask_prompt_loss: Whether to mask prompt (user) tokens in loss computation
-        max_seq_length: Maximum sequence length (default: 2048)
+        max_seq_length: Maximum sequence length (default: 16000)
         padding: Padding strategy ("max_length" or "longest")
     """
 
     processor: ProcessorMixin
     mask_prompt_loss: bool = True
-    max_seq_length: int = 2048
+    max_seq_length: int = 16000
     padding: str = "max_length"
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
@@ -85,14 +85,28 @@ class Qwen3VLDataCollator:
 
         if actual_images:
             # Process both text and images together
+            # For image inputs, we need more tokens due to image placeholders
+            # Either increase max_length or disable truncation to avoid mismatch
             batch_inputs = self.processor(
                 text=formatted_texts,  # List of formatted strings
                 images=actual_images,  # List of images
                 padding=self.padding,
                 max_length=self.max_seq_length,
-                truncation=True,
+                truncation=False,  # Disable truncation for images to avoid token mismatch
                 return_tensors="pt",
             )
+
+            # If sequences are too long, manually truncate after processing
+            if batch_inputs["input_ids"].shape[1] > self.max_seq_length:
+                # Truncate all tensors to max_seq_length
+                batch_inputs["input_ids"] = batch_inputs["input_ids"][:, :self.max_seq_length]
+                batch_inputs["attention_mask"] = batch_inputs["attention_mask"][:, :self.max_seq_length]
+                if "pixel_values" in batch_inputs:
+                    # pixel_values shape is different, don't truncate
+                    pass
+                if "image_grid_thw" in batch_inputs:
+                    # image_grid_thw is metadata, don't truncate
+                    pass
         else:
             # No images, just process text
             batch_inputs = self.processor(
@@ -237,7 +251,7 @@ class Qwen3VLDataCollator:
         return labels
 
 
-def create_qwen3_vl_collator(processor, mask_prompt_loss=True, max_seq_length=2048):
+def create_qwen3_vl_collator(processor, mask_prompt_loss=True, max_seq_length=16000):
     """
     Factory function to create Qwen3VL data collator.
 
