@@ -84,17 +84,98 @@ class Qwen3VLDataCollator:
             formatted_texts.append(formatted_text)
 
         if actual_images:
-            # Process both text and images together
-            # For image inputs, we need more tokens due to image placeholders
-            # Use truncation to ensure consistent batch sizes
-            batch_inputs = self.processor(
-                text=formatted_texts,  # List of formatted strings
-                images=actual_images,  # List of images
-                padding=self.padding,
-                max_length=self.max_seq_length,
-                truncation=True,  # Enable truncation to prevent size mismatch
-                return_tensors="pt",
+            # Process each sample individually to handle truncation properly
+            # This prevents image token mismatch errors
+            processed_samples = []
+            for i, (text, image) in enumerate(zip(formatted_texts, images)):
+                if image is not None:
+                    try:
+                        # First try without truncation to check length
+                        sample_input = self.processor(
+                            text=[text],
+                            images=[image],
+                            padding=False,
+                            return_tensors="pt",
+                        )
+
+                        # If too long, skip the image and process text only
+                        if sample_input["input_ids"].shape[1] > self.max_seq_length:
+                            sample_input = self.processor(
+                                text=[text],
+                                padding=False,
+                                max_length=self.max_seq_length,
+                                truncation=True,
+                                return_tensors="pt",
+                            )
+                    except Exception:
+                        # Fallback to text-only processing if any error
+                        sample_input = self.processor(
+                            text=[text],
+                            padding=False,
+                            max_length=self.max_seq_length,
+                            truncation=True,
+                            return_tensors="pt",
+                        )
+                else:
+                    # No image for this sample
+                    sample_input = self.processor(
+                        text=[text],
+                        padding=False,
+                        max_length=self.max_seq_length,
+                        truncation=True,
+                        return_tensors="pt",
+                    )
+                processed_samples.append(sample_input)
+
+            # Combine all samples and pad to the same length
+            max_len = min(
+                max(sample["input_ids"].shape[1] for sample in processed_samples),
+                self.max_seq_length
             )
+
+            # Pad all samples to the same length
+            input_ids_list = []
+            attention_mask_list = []
+            pixel_values_list = []
+            image_grid_thw_list = []
+
+            for sample in processed_samples:
+                # Handle input_ids and attention_mask
+                curr_len = sample["input_ids"].shape[1]
+                if curr_len < max_len:
+                    # Pad on the right
+                    pad_len = max_len - curr_len
+                    sample["input_ids"] = torch.nn.functional.pad(
+                        sample["input_ids"], (0, pad_len),
+                        value=self.processor.tokenizer.pad_token_id
+                    )
+                    sample["attention_mask"] = torch.nn.functional.pad(
+                        sample["attention_mask"], (0, pad_len), value=0
+                    )
+                elif curr_len > max_len:
+                    # Truncate
+                    sample["input_ids"] = sample["input_ids"][:, :max_len]
+                    sample["attention_mask"] = sample["attention_mask"][:, :max_len]
+
+                input_ids_list.append(sample["input_ids"])
+                attention_mask_list.append(sample["attention_mask"])
+
+                # Handle pixel_values and image_grid_thw if present
+                if "pixel_values" in sample:
+                    pixel_values_list.append(sample["pixel_values"])
+                if "image_grid_thw" in sample:
+                    image_grid_thw_list.append(sample["image_grid_thw"])
+
+            # Stack all tensors
+            batch_inputs = {
+                "input_ids": torch.cat(input_ids_list, dim=0),
+                "attention_mask": torch.cat(attention_mask_list, dim=0),
+            }
+
+            if pixel_values_list:
+                batch_inputs["pixel_values"] = torch.cat(pixel_values_list, dim=0)
+            if image_grid_thw_list:
+                batch_inputs["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
         else:
             # No images, just process text
             batch_inputs = self.processor(
