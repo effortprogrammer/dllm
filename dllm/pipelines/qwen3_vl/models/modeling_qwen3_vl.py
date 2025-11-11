@@ -132,6 +132,13 @@ class Qwen3VLForMaskedLM(PreTrainedModel, GenerationMixin):
         # For Qwen3VL, set via model.set_output_embeddings()
         self.model.set_output_embeddings(new_embeddings)
 
+    def get_base_model(self):
+        """
+        Expose the underlying Qwen3VL model so utilities (e.g., Liger kernel)
+        can operate on the original architecture.
+        """
+        return self.model
+
     def forward(
         self,
         input_ids: torch.LongTensor,
